@@ -26,6 +26,18 @@
     "p-memoize": "2.0.0"
   },
   "devDependencies": {
+    "babel-plugin-transform-object-rest-spread": "6.26.0",
+    "babel-preset-es2015": "6.24.1",
+    "babel-preset-stage-0": "6.24.1",
     "panik": "1.0.1"
+  },
+  "babel": {
+    "presets": [
+      "es2015",
+      "stage-0"
+    ],
+    "plugins": [
+      "transform-object-rest-spread"
+    ]
   }
 }
