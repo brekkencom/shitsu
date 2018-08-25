@@ -2,11 +2,11 @@ const assert = require('assert');
 const { promisify } = require('util');
 const GoogleSpreadsheet = require('google-spreadsheet');
 const debug = require('debug')('shitsu');
-const { findIndex, pick, find, groupBy, map, last } = require('lodash');
+const { findIndex, find, last, findLastIndex, uniq } = require('lodash');
 
 async function createShitsu(sheetId, creds) {
-  assert(sheetId);
-  assert(creds);
+  assert(sheetId, 'sheetId is required');
+  assert(creds, 'creds is required');
 
   const doc = new GoogleSpreadsheet(sheetId);
 
@@ -30,40 +30,47 @@ async function createShitsu(sheetId, creds) {
     const bulkUpdateCellsAsync = promisify(sheet.bulkUpdateCells);
 
     const getHeaderFromCells = function(cells) {
-      assert(cells.length > 0);
+      const lastHeaderCellIndex = findLastIndex(
+        cells,
+        cell => cell.row === 1 && cell.value.length
+      );
 
-      const initial = {
-        cell: null,
-        values: [],
-      };
+      if (!~lastHeaderCellIndex) {
+        throw new Error('There is no header');
+      }
 
-      const reducer = (prev, cell) => {
-        if (cell.row > 1) {
-          return prev;
+      const headers = new Array(cells[lastHeaderCellIndex].col);
+
+      let cellIndex = lastHeaderCellIndex;
+
+      for (
+        let headerIndex = headers.length - 1;
+        headerIndex >= 0;
+        headerIndex--
+      ) {
+        const { col, row, value } = cells[cellIndex];
+
+        assert.equal(row, 1);
+
+        // Skip blanks (allows sparse)
+        if (col - 1 < headerIndex) {
+          headers[headerIndex] = '';
+          continue;
         }
 
-        if (prev.cell) {
-          assert(cell.col === prev.cell.col + 1);
-        } else {
-          assert(prev.cell === null && cell.col === 1);
-        }
+        headers[headerIndex] = value;
+        cellIndex--;
+      }
 
-        const { value } = cell;
+      const nonBlankHeaders = headers.filter(_ => _.length);
 
-        assert(
-          value.length > 0,
-          `Cannot have blank cells. Cell #${cell.col} is blank`
-        );
+      if (nonBlankHeaders.length !== uniq(nonBlankHeaders).length) {
+        // console.log(headers);
+        // console.log(uniq(headers));
+        throw new Error(`Header has duplicates`);
+      }
 
-        return {
-          cell,
-          values: [...prev.values, value],
-        };
-      };
-
-      const { values } = cells.reduce(reducer, initial);
-
-      return values;
+      return headers;
     };
 
     const fetchHeader = async function() {
@@ -86,8 +93,6 @@ async function createShitsu(sheetId, creds) {
         'max-row': sheet.rowCount,
         'min-col': 1,
         'max-col': sheet.colCount,
-        // 'return-empty': true,
-        // 'oncl'
       });
 
     const fetch = async function() {
@@ -97,258 +102,163 @@ async function createShitsu(sheetId, creds) {
 
       const cells = await fetchEveryCell();
       const header = getHeaderFromCells(cells);
-      const cellsAfterHeader = cells.slice(header.length);
+      const firstNonHeaderCellIndex = findIndex(cells, cell => cell.row > 1);
 
-      // console.log(
-      //   JSON.stringify(
-      //     cells.map(_ => ({
-      //       row: _.row,
-      //       col: _.col,
-      //       value: _.value,
-      //     })),
-      //     null,
-      //     2
-      //   )
-      // );
+      const rows = [];
 
-      // return;
+      let rowN = 0;
+      let colN = 0;
+      let cellIndex = firstNonHeaderCellIndex;
+      let row;
+      let rowIsBlank;
 
-      const initial = {
-        cell: null,
-        rows: [],
-        row: [],
-      };
+      while (true) {
+        const nextCell = cells[cellIndex];
 
-      // console.log(header, header.length);
-      // console.log(cellsAfterHeader[0]);
+        const isMatchingCell =
+          nextCell && nextCell.col - 1 === colN && nextCell.row - 2 === rowN;
 
-      const reducer = (prev, cell, index, cells) => {
-        if (prev.done) {
-          return prev;
+        // console.log({
+        //   cellIndex,
+        //   colN,
+        //   rowN,
+        //   isMatchingCell,
+        //   nextCellCol: nextCell && nextCell.col,
+        //   nextCellRow: nextCell && nextCell.row,
+        // });
+
+        if (colN === 0) {
+          row = {};
+          rowIsBlank = true;
         }
 
-        const isLastInRow = (cells[index + 1] || {}).row !== cell.row;
+        const key = header[colN];
+        assert(key);
 
-        const { value } = cell;
+        const value = isMatchingCell ? nextCell.value : '';
 
-        // console.log(cell.col, value);
-
-        if (cell.col === 1 && !value.length) {
-          return { ...prev, done: true };
+        if (value !== '') {
+          rowIsBlank = false;
         }
 
-        if (!prev.cell) {
-          assert(prev.cell === null && cell.col === 1 && cell.row === 2);
+        row[key] = value;
+
+        if (isMatchingCell) {
+          cellIndex++;
         }
 
-        const nextRow = [...prev.row, value];
+        if (colN === header.length - 1) {
+          rowN += 1;
+          colN = 0;
 
-        return {
-          cell,
-          rows: isLastInRow ? [...prev.rows, nextRow] : prev.rows,
-          row: isLastInRow ? [] : nextRow,
-        };
-      };
+          if (rowIsBlank) {
+            // console.log('breaking because every cell is blank');
+            break;
+          }
 
-      const { rows: rowsAsArray } = cellsAfterHeader.reduce(reducer, initial);
+          rows.push(row);
+        } else {
+          colN += 1;
+        }
+      }
 
-      const rows = rowsAsArray.reduce(
-        (rows, rowValues) => [
-          ...rows,
-          rowValues.reduce(
-            (row, value, index) => ({
-              ...row,
-              [header[index]]: value,
-            }),
-            {}
-          ),
-        ],
-        []
-      );
-
-      return { header, rows };
+      return { header, rows, cells };
     };
 
-    const updateRow = async (row, { replace = false } = {}) => {
-      const cells = await fetchEveryCell();
-      const header = getHeaderFromCells(cells);
+    const updateRow = async (criteria = {}, nextRow) => {
+      const { rows, header } = await fetch();
 
-      const keyName = header[0];
-      assert(keyName, 'Key name missing from header;');
-
-      const key = row[keyName];
-      assert(key, `Key (${keyName}) is missing`);
-
-      // Fetch every key
-      const cellsInFirstColumn = await getCellsAsync({
-        'min-row': 1,
-        'max-row': sheet.rowCount,
-        'min-col': 1,
-        'max-col': 1,
-      });
-
-      // Find the row number of the key
-      const keyCells = cellsInFirstColumn.filter(cell => {
-        assert.equal(cell.col, 1);
-        return cell.value === key;
-      });
-
-      assert(keyCells.length < 2, 'Duplicate keys is not supported');
-
-      const [keyCell] = keyCells;
-
-      assert(
-        keyCell,
-        `A row with ${keyName} equal to ${key} could not be  found`
-      );
-
-      // Extract the row
-      const rowCells = await getCellsAsync({
-        'min-row': keyCell.row,
-        'max-row': keyCell.row,
-        'min-col': 1,
-        'max-col': sheet.colCount,
-        'return-empty': true,
-      });
+      const rowMatchesCriteria = row =>
+        Object.keys(criteria).every(key => row[key] === criteria[key]);
 
       const cellsToUpdate = [];
 
-      for (let headerIndex = 0; headerIndex < header.length; headerIndex++) {
-        const headerKey = header[headerIndex];
+      let updatedRowCount = 0;
 
-        // Skip undefined keys unless replacing
-        if (row[headerKey] === undefined && !replace) {
+      for (let rowN = 0; rowN < rows.length; rowN++) {
+        const row = rows[rowN];
+
+        if (!rowMatchesCriteria(row)) {
           continue;
         }
 
-        // Do not update the row key cell
-        if (headerIndex === 0) {
-          continue;
+        const cellsInRow = await getCellsAsync({
+          'min-col': 1,
+          'max-col': header.length,
+          'min-row': rowN + 2,
+          'max-row': rowN + 2,
+          'return-empty': true,
+        });
+
+        for (const headerKey of Object.keys(nextRow)) {
+          const headerIndex = header.indexOf(headerKey);
+
+          if (!~headerIndex) {
+            throw new Error(`Header ${headerKey} not found`);
+          }
+
+          const cell = cellsInRow.find(
+            cell => cell.col === headerIndex + 1 && cell.row === rowN + 2
+          );
+
+          if (!cell) {
+            throw new Error(`Update target cell not returned`);
+          }
+
+          cell.value = nextRow[headerKey];
+          cellsToUpdate.push(cell);
         }
 
-        const nextValueIsBlank =
-          row[headerKey] === undefined || row[headerKey] === '';
-
-        const nextValue = nextValueIsBlank ? '' : row[headerKey];
-
-        const cell = rowCells.find(_ => _.col === headerIndex + 1);
-        assert(cell, `Cell not found for ${headerKey}`);
-
-        cell.value = nextValue;
-        cellsToUpdate.push(cell);
+        updatedRowCount++;
       }
 
-      await bulkUpdateCellsAsync(cellsToUpdate);
+      if (cellsToUpdate.length) {
+        await bulkUpdateCellsAsync(cellsToUpdate);
+      }
+
+      return {
+        updatedRowCount,
+        updatedCellCount: cellsToUpdate.length,
+      };
     };
 
     const insertRow = async row => {
-      const cells = await fetchEveryCell();
-      const header = getHeaderFromCells(cells);
-
-      const keyName = header[0];
-      assert(keyName, 'Key name missing from header;');
-
-      const key = row[keyName];
-      assert(key, `Key (${keyName}) is missing`);
-
-      // Fetch every key
-      const cellsInFirstColumn = await getCellsAsync({
-        'min-row': 1,
-        'max-row': sheet.rowCount,
-        'min-col': 1,
-        'max-col': 1,
-      });
-
-      const duplicateKeys = cellsInFirstColumn.filter(
-        cell => cell.value === key
-      );
-
-      if (duplicateKeys.length) {
-        throw new Error(
-          `Key ${key} would collide with ${duplicateKeys.length} other keys`
-        );
-      }
-
-      // TODO: Gap key cells
-      const nextRowNumber = last(cellsInFirstColumn).row + 1;
-
-      // Extract the row
-      const rowCells = await getCellsAsync({
-        'min-row': nextRowNumber,
-        'max-row': nextRowNumber,
-        'min-col': 1,
-        'max-col': sheet.colCount,
-        'return-empty': true,
-      });
+      const { rows, header } = await fetch();
 
       const cellsToUpdate = [];
 
-      // TODO: If a cell has no key, but has other values defined, it can get confusing
+      // console.log({ rows, header });
 
-      for (let headerIndex = 0; headerIndex < header.length; headerIndex++) {
-        const headerKey = header[headerIndex];
+      const nextRowN = rows.length;
 
-        const nextValueIsBlank =
-          row[headerKey] === undefined || row[headerKey] === '';
+      const cellsInRow = await getCellsAsync({
+        'min-col': 1,
+        'max-col': header.length,
+        'min-row': nextRowN + 2,
+        'max-row': nextRowN + 2,
+        'return-empty': true,
+      });
 
-        const nextValue = nextValueIsBlank ? '' : row[headerKey];
+      // console.log({ nextRowN, cellsInRow });
 
-        const cell = rowCells.find(_ => _.col === headerIndex + 1);
-        assert(cell, `Cell not found for ${headerKey}`);
+      for (const headerKey of Object.keys(row)) {
+        const headerIndex = header.indexOf(headerKey);
 
-        cell.value = nextValue;
+        if (!~headerIndex) {
+          throw new Error(`Header ${headerKey} not found`);
+        }
+
+        const cell = cellsInRow.find(cell => cell.col === headerIndex + 1);
+
+        if (!cell) {
+          throw new Error(`Update target cell not returned`);
+        }
+
+        cell.value = row[headerKey];
         cellsToUpdate.push(cell);
       }
 
       await bulkUpdateCellsAsync(cellsToUpdate);
-    };
-
-    const clearIncludingKeyWithRowNumber = async function(rowNumber) {
-      assert(rowNumber > 1);
-
-      // Extract the row
-      const rowCells = await getCellsAsync({
-        'min-row': rowNumber,
-        'max-row': rowNumber,
-        'min-col': 1,
-        'max-col': sheet.colCount,
-      });
-
-      if (!rowCells.length) {
-        return;
-      }
-
-      rowCells.forEach(cell => (cell.value = ''));
-
-      await bulkUpdateCellsAsync(rowCells);
-    };
-
-    const fetchRowNumbersFromKeys = async function(keys) {
-      // Fetch every key
-      const cellsInFirstColumn = await getCellsAsync({
-        'min-row': 1,
-        'max-row': sheet.rowCount,
-        'min-col': 1,
-        'max-col': 1,
-      });
-
-      const matchingCells = cellsInFirstColumn.filter(
-        cell => console.log(cell.value, keys) || keys.includes(cell.value)
-      );
-
-      const matchingRowNumbers = matchingCells.map(_ => _.row);
-
-      return matchingRowNumbers;
-    };
-
-    const clearIncludingKeyWithKey = async function(key) {
-      const rowNumbers = await fetchRowNumbersFromKeys([key]);
-
-      console.log({ rowNumbers });
-
-      for (const rowNumber of rowNumbers) {
-        await clearIncludingKeyWithRowNumber(rowNumber);
-      }
     };
 
     const insertRows = async function(rows) {
@@ -362,7 +272,6 @@ async function createShitsu(sheetId, creds) {
       fetchHeader,
       updateRow,
       insertRow,
-      clearIncludingKeyWithKey,
       insertRows,
     };
   };
