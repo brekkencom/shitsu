@@ -27,6 +27,7 @@ async function createShitsu(sheetId, creds) {
     }
 
     const getCellsAsync = promisify(sheet.getCells);
+    const getRowsAsync = promisify(sheet.getRows);
     const bulkUpdateCellsAsync = promisify(sheet.bulkUpdateCells);
 
     const getHeaderFromCells = function(cells) {
@@ -267,12 +268,51 @@ async function createShitsu(sheetId, creds) {
       }
     };
 
+    const deleteRows = async (criteria = {}) => {
+      const { rows, header } = await fetch();
+
+      const rowMatchesCriteria = row =>
+        Object.keys(criteria).every(key => row[key] === criteria[key]);
+
+      const cellsToUpdate = [];
+
+      let deletedRowCount = 0;
+
+      for (let rowN = rows.length - 1; rowN >= 0; rowN--) {
+        const row = rows[rowN];
+
+        if (!rowMatchesCriteria(row)) {
+          continue;
+        }
+
+        const [rowRef] = await getRowsAsync({
+          offset: rowN + 1,
+          limit: 1,
+        });
+
+        assert(row, `Row #${rowN + 1} was not returned`);
+
+        await promisify(rowRef.del)();
+
+        deletedRowCount++;
+      }
+
+      if (cellsToUpdate.length) {
+        await bulkUpdateCellsAsync(cellsToUpdate);
+      }
+
+      return {
+        deletedRowCount,
+      };
+    };
+
     return {
       fetch,
       fetchHeader,
       updateRow,
       insertRow,
       insertRows,
+      deleteRows,
     };
   };
 
