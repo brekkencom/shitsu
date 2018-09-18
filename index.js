@@ -31,10 +31,7 @@ async function createShitsu(sheetId, creds) {
     const bulkUpdateCellsAsync = promisify(sheet.bulkUpdateCells);
 
     const getHeaderFromCells = function(cells) {
-      const lastHeaderCellIndex = findLastIndex(
-        cells,
-        cell => cell.row === 1 && cell.value.length
-      );
+      const lastHeaderCellIndex = findLastIndex(cells, cell => cell.row === 1 && cell.value && cell.value.length);
 
       if (!~lastHeaderCellIndex) {
         throw new Error('There is no header');
