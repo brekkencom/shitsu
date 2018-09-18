@@ -17,8 +17,6 @@ async function createShitsu(sheetId, creds) {
   const forBook = async function(sheetTitle) {
     const { worksheets, ...otherInfo } = await getInfoAsync();
 
-    // console.log(worksheets, otherInfo);
-
     const sheet = find(worksheets, { title: sheetTitle });
 
     if (!sheet) {
@@ -59,8 +57,6 @@ async function createShitsu(sheetId, creds) {
       const nonBlankHeaders = headers.filter(_ => _.length);
 
       if (nonBlankHeaders.length !== uniq(nonBlankHeaders).length) {
-        // console.log(headers);
-        // console.log(uniq(headers));
         throw new Error(`Header has duplicates`);
       }
 
@@ -90,12 +86,13 @@ async function createShitsu(sheetId, creds) {
       });
 
     const fetch = async function() {
-      if (sheet.rowCount === 1) {
-        return [];
-      }
-
       const cells = await fetchEveryCell();
       const header = getHeaderFromCells(cells);
+
+      if (sheet.rowCount === 1) {
+        return { rows: [], header };
+      }
+
       const firstNonHeaderCellIndex = findIndex(cells, cell => cell.row > 1);
 
       const rows = [];
@@ -110,15 +107,6 @@ async function createShitsu(sheetId, creds) {
         const nextCell = cells[cellIndex];
 
         const isMatchingCell = nextCell && nextCell.col - 1 === colN && nextCell.row - 2 === rowN;
-
-        // console.log({
-        //   cellIndex,
-        //   colN,
-        //   rowN,
-        //   isMatchingCell,
-        //   nextCellCol: nextCell && nextCell.col,
-        //   nextCellRow: nextCell && nextCell.row,
-        // });
 
         if (colN === 0) {
           row = {};
@@ -145,7 +133,6 @@ async function createShitsu(sheetId, creds) {
           colN = 0;
 
           if (rowIsBlank) {
-            // console.log('breaking because every cell is blank');
             break;
           }
 
@@ -217,8 +204,6 @@ async function createShitsu(sheetId, creds) {
 
       const cellsToUpdate = [];
 
-      // console.log({ rows, header });
-
       const nextRowN = rows.length;
 
       const cellsInRow = await getCellsAsync({
@@ -228,8 +213,6 @@ async function createShitsu(sheetId, creds) {
         'max-row': nextRowN + 2,
         'return-empty': true,
       });
-
-      // console.log({ nextRowN, cellsInRow });
 
       for (const headerKey of Object.keys(row)) {
         const headerIndex = header.indexOf(headerKey);
@@ -258,7 +241,7 @@ async function createShitsu(sheetId, creds) {
     };
 
     const deleteRows = async (criteria = {}) => {
-      const { rows, header } = await fetch();
+      const { rows } = await fetch();
 
       const rowMatchesCriteria = row => Object.keys(criteria).every(key => row[key] === criteria[key]);
 
