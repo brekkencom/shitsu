@@ -41,11 +41,7 @@ async function createShitsu(sheetId, creds) {
 
       let cellIndex = lastHeaderCellIndex;
 
-      for (
-        let headerIndex = headers.length - 1;
-        headerIndex >= 0;
-        headerIndex--
-      ) {
+      for (let headerIndex = headers.length - 1; headerIndex >= 0; headerIndex--) {
         const { col, row, value } = cells[cellIndex];
 
         assert.equal(row, 1);
@@ -113,8 +109,7 @@ async function createShitsu(sheetId, creds) {
       while (true) {
         const nextCell = cells[cellIndex];
 
-        const isMatchingCell =
-          nextCell && nextCell.col - 1 === colN && nextCell.row - 2 === rowN;
+        const isMatchingCell = nextCell && nextCell.col - 1 === colN && nextCell.row - 2 === rowN;
 
         // console.log({
         //   cellIndex,
@@ -166,8 +161,7 @@ async function createShitsu(sheetId, creds) {
     const updateRow = async (criteria = {}, nextRow) => {
       const { rows, header } = await fetch();
 
-      const rowMatchesCriteria = row =>
-        Object.keys(criteria).every(key => row[key] === criteria[key]);
+      const rowMatchesCriteria = row => Object.keys(criteria).every(key => row[key] === criteria[key]);
 
       const cellsToUpdate = [];
 
@@ -195,9 +189,7 @@ async function createShitsu(sheetId, creds) {
             throw new Error(`Header ${headerKey} not found`);
           }
 
-          const cell = cellsInRow.find(
-            cell => cell.col === headerIndex + 1 && cell.row === rowN + 2
-          );
+          const cell = cellsInRow.find(cell => cell.col === headerIndex + 1 && cell.row === rowN + 2);
 
           if (!cell) {
             throw new Error(`Update target cell not returned`);
@@ -268,8 +260,7 @@ async function createShitsu(sheetId, creds) {
     const deleteRows = async (criteria = {}) => {
       const { rows, header } = await fetch();
 
-      const rowMatchesCriteria = row =>
-        Object.keys(criteria).every(key => row[key] === criteria[key]);
+      const rowMatchesCriteria = row => Object.keys(criteria).every(key => row[key] === criteria[key]);
 
       const cellsToUpdate = [];
 
